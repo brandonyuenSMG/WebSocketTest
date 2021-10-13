@@ -25,6 +25,7 @@ private:
 	void Construct(const FArguments& InArgs);
 
 	FReply OnConnectClicked() const;
+	void HandleError(const FMgsError& Error) const;
 	FReply OnDebugLoginClicked() const;
 	FReply OnEchoClicked() const;
 	FReply OnDisconnectClicked() const;

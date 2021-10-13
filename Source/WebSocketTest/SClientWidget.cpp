@@ -18,27 +18,27 @@
 BEGIN_SLATE_FUNCTION_BUILD_OPTIMIZATION
 
 void SClientWidget::Construct(const FArguments& InArgs)
-{    
+{
     bCanSupportFocus = true;
 
     OwningHUD = InArgs._OwningHUD;
 
     const FMargin ContentPadding = FMargin(300.f, 100.f);
     const FMargin ButtonPadding = FMargin(25.f);
-    
+
     const FText TitleText = LOCTEXT("WebSocket Client", "WebSocket Client");
     const FText ConnectText = LOCTEXT("Connect", "Connect");
     const FText DebugLoginText = LOCTEXT("Debug Login", "Debug Login");
     const FText EchoText = LOCTEXT("Echo", "Echo");
     const FText DisconnectText = LOCTEXT("Disconnect", "Disconnect");
     const FText QuitText = LOCTEXT("Quit", "Quit");
-    
+
     FSlateFontInfo ButtonTextStyle = FCoreStyle::Get().GetFontStyle("EmbossedText");
     ButtonTextStyle.Size = 40.f;
-        
+
     FSlateFontInfo TitleTextStyle = ButtonTextStyle;
     TitleTextStyle.Size = 60.f;
-    
+
 ChildSlot
     [
         SNew(SOverlay)
@@ -72,7 +72,7 @@ ChildSlot
                 .Text(TitleText)
                 .Justification(ETextJustify::Center)
             ]
-            
+
             //Connect button
             + SVerticalBox::Slot()
             .Padding(ButtonPadding)
@@ -93,13 +93,13 @@ ChildSlot
                  SNew(SButton)
                  .OnClicked(this, &SClientWidget::OnDebugLoginClicked)
                  [
-                     SNew(STextBlock)                     
+                     SNew(STextBlock)
                      .Font(ButtonTextStyle)
                      .Text(DebugLoginText)
                      .Justification(ETextJustify::Center)
                  ]
              ]
-         
+
              //Echo button
              + SVerticalBox::Slot()
              .Padding(ButtonPadding)
@@ -113,7 +113,7 @@ ChildSlot
                      .Justification(ETextJustify::Center)
                  ]
              ]
-             
+
              //Disconnect button
              + SVerticalBox::Slot()
              .Padding(ButtonPadding)
@@ -139,15 +139,15 @@ ChildSlot
                     .Font(ButtonTextStyle)
                     .Text(QuitText)
                     .Justification(ETextJustify::Center)
-                ]    
+                ]
             ]
-        ]    
+        ]
     ];
 
     struct FWebSocketConfiguration Config;
     Config.Num_Retries = 10;
     Config.Sleep_Length = 3;
-    
+
     Client = MakeShareable(new FWebSocketClient(Config));
 
 
@@ -156,17 +156,17 @@ ChildSlot
         if (IsSuccess)
         {
              ConnectionIndicator->SetColorAndOpacity(FLinearColor::FromSRGBColor(FColor::Green));
-             Client->WebSocket->OnMessage().AddLambda([](const FString& Message)
-             {
-                 FMessageDialog().Debugf(FText::FromString(Message));
-             });
+             // Client->WebSocket->OnMessage().AddLambda([](const FString& Message)
+             // {
+             //     FMessageDialog().Debugf(FText::FromString(Message));
+             // });
         }
     });
-    
+
     Client->OnClosed.AddLambda([this]() {
         ConnectionIndicator->SetColorAndOpacity(FLinearColor::FromSRGBColor(FColor::Red));
     });
-    
+
     Client->OnReconnection.AddLambda([this]() {
         ConnectionIndicator->SetColorAndOpacity(FLinearColor::FromSRGBColor(FColor::Orange));
     });
@@ -175,8 +175,16 @@ ChildSlot
 FReply SClientWidget::OnConnectClicked() const
 {
     Client->ConnectToServer();
-    
+
     return FReply::Handled();
+}
+
+void SClientWidget::HandleError(const FMgsError& Error) const
+{
+    AsyncTask(ENamedThreads::GameThread, [Error]()
+    {
+        FMessageDialog().Debugf(FText::FromString(Error.Message));
+    });
 }
 
 FReply SClientWidget::OnDebugLoginClicked() const
@@ -186,13 +194,24 @@ FReply SClientWidget::OnDebugLoginClicked() const
         const FDebugLoginRequestData DebugLogin{"myToken"};
         AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, DebugLogin]()
         {
-            UE_LOG(LogTemp, Log, TEXT("%s"), *Client-> SendAsync<FDebugLogin, FDebugLoginRequestData, FDebugLoginResponseData>(DebugLogin, true).Id);
+            try
+            {
+                const auto Login = Client-> SendAsync<FDebugLoginRequestData, FDebugLoginResponseData>(DebugLogin, true);
+                UE_LOG(LogTemp, Log, TEXT("%s"), *Client-> SendAsync<FDebugLoginRequestData, FDebugLoginResponseData>(DebugLogin, true).Id);
+                AsyncTask(ENamedThreads::GameThread, [Login]()
+                {
+                    FMessageDialog().Debugf(FText::FromString("Logged in: " + Login.Id));
+                });
+            } catch (FMgsError e)
+            {
+                HandleError(e);
+            }
         });
     } else
     {
         FMessageDialog().Debugf(FText::FromString("Not connected to a server"));
     }
-    
+
     return FReply::Handled();
 }
 
@@ -203,14 +222,25 @@ FReply SClientWidget::OnEchoClicked() const
         const FEchoRequestData Echo{"Testing...testing...1..2..3.."};
         AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this, Echo]()
         {
-            UE_LOG(LogTemp, Log, TEXT("%s"), *Client->SendAsync<FEcho, FEchoRequestData, FEchoResponseData>(Echo, true).Val);
+            try
+            {
+                const auto EchoResponse = Client->SendAsync<FEchoRequestData, FEchoResponseData>(Echo, true).Val;
+                UE_LOG(LogTemp, Log, TEXT("%s"), *EchoResponse);
+                AsyncTask(ENamedThreads::GameThread, [EchoResponse]()
+                {
+                    FMessageDialog().Debugf(FText::FromString(EchoResponse));
+                });
+            } catch (const FMgsError& e)
+            {
+                HandleError(e);
+            }
         });
-        
+
     } else
     {
         FMessageDialog().Debugf(FText::FromString("Not connected to a server"));
     }
-   
+
     return FReply::Handled();
 }
 
@@ -223,7 +253,7 @@ FReply SClientWidget::OnDisconnectClicked() const
     {
         FMessageDialog().Debugf(FText::FromString("Not connected to a server"));
     }
-    
+
     return FReply::Handled();
 }
 
@@ -237,8 +267,8 @@ FReply SClientWidget::OnQuitClicked() const
             PC->ConsoleCommand("quit");
         }
     }
-    
-    return FReply::Handled();    
+
+    return FReply::Handled();
 }
 #undef LOCTEXT_NAMESPACE
 

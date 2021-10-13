@@ -10,5 +10,8 @@ FString FEchoRequestData::GetName() const
 	return Name;
 }
 
-
+FString FMgsError::GetName() const
+{
+	return Name;
+}
 
