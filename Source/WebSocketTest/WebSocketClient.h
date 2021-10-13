@@ -7,6 +7,10 @@
 #include "WebSocketsModule.h"
 #include <condition_variable>
 #include <mutex>
+#include <shared_mutex>
+#include <chrono>
+#include <thread>
+using namespace std::chrono_literals;
 
 #include "WebSocketStructs.h"
 
@@ -34,7 +38,7 @@ class WEBSOCKETTEST_API FWebSocketClient
 	IWebSocket* WebSocket;
 
 	explicit FWebSocketClient(struct FWebSocketConfiguration);
-	
+
 	FWebSocketClient();
 
 	void SetNumRetries(int32);
@@ -44,67 +48,76 @@ class WEBSOCKETTEST_API FWebSocketClient
 	void ConnectToServer();
 
 	void DisconnectFromServer() const;
-	
+
 	bool IsConnected() const;
 
-	
+
 	// Prevents the game from crashing if the client is in the middle of trying to reconnect
 	void Quit();
-	
-	template <typename TRequest, typename TRequestData>
-	TRequest CreateWebSocketRequest(TRequestData Data, const bool AckRequired)
+	template <typename TRequest>
+	TSharedPtr<FJsonObject> CreateWebSocketRequest(const TRequest& Data, const bool AckRequired)
 	{
-		TRequest Request;
-	
-		Request.Id = ++Counter > 0 ? Counter : 1;
-		Request.Ack = AckRequired ? 1 : 0;
-		Request.MsgType = Data.GetName();
-		Request.Data = Data;
+		TSharedPtr<FJsonObject> JsonObject = MakeShareable(new FJsonObject);
+		JsonObject->SetNumberField("id", ++Counter > 0 ? Counter : 1);
+		JsonObject->SetNumberField("ack", AckRequired ? 1 : 0);
+		JsonObject->SetStringField("msgType", Data.GetName());
+		JsonObject->SetObjectField("data", FJsonObjectConverter::UStructToJsonObject(Data));
+		return JsonObject;
+	}
 
-		return Request;
-	};
-
-	template <typename TRequest, typename TRequestData, typename TResponseData>
-	TResponseData SendAsync(TRequestData RequestData, const bool AckRequired)
-	{	
+	template <typename TRequest, typename TResponseData>
+	TResponseData SendAsync(const TRequest& RequestData, const bool AckRequired = true, uint TimeoutMs = 5000)
+	{
 		FString JsonRequest;
-		TRequest WebSocketRequest = CreateWebSocketRequest<TRequest, TRequestData>(RequestData, AckRequired);
-		
+		auto WebSocketRequest = CreateWebSocketRequest(RequestData, AckRequired);
+
 		if (AckRequired)
 		{
 			// FWebSocketResponse Response {nullptr, false};
-			AckMap.Add(WebSocketRequest.Id, nullptr);
+			WriteAckMap(WebSocketRequest->GetNumberField("id"), nullptr);
 		}
-		
-		FJsonObjectConverter::UStructToJsonObjectString(WebSocketRequest, JsonRequest);
-		
+		const auto Writer = TJsonWriterFactory<>::Create(&JsonRequest);
+		FJsonSerializer::Serialize(WebSocketRequest.ToSharedRef(), Writer);
+
 		UE_LOG(LogTemp, Log, TEXT("%s"), *JsonRequest);
-		
+
 		WebSocket->Send(JsonRequest);
-		
+
 		UE_LOG(LogTemp, Log, TEXT("Request sent"));
-		
+
 		if (!AckRequired) return {};
 
-		TFunction<TResponseData()> Task = [this, &WebSocketRequest] {
-		
-			UE_LOG(LogTemp, Log, TEXT("Before WaitForResponseAsync"));
-			return WaitForResponseAsync<TResponseData>(WebSocketRequest.Id);
-		};
-		
 		UE_LOG(LogTemp, Log, TEXT("Before Async"));
-		
-		auto FutureResponse = Async(EAsyncExecution::TaskGraph, Task); 
-		
+
+		bool Success = false;
+		//If there is an error event, it will be returned in the Pair.Value'
+		//otherwise, the response will be in Pair.Key
+		auto FutureResponse = Async(EAsyncExecution::TaskGraph, [this, WebSocketRequest, &Success, TimeoutMs] {
+			UE_LOG(LogTemp, Log, TEXT("Before WaitForResponseAsync"));
+			TPair<TResponseData, FMgsError> Pair;
+			try
+			{
+				Pair.Key = WaitForResponseAsync<TResponseData>(WebSocketRequest->GetNumberField("id"), TimeoutMs);
+				Success = true;
+			} catch (const FMgsError& e)
+			{
+				Pair.Value = e;
+			}
+			return Pair;
+		});
+
 		UE_LOG(LogTemp, Log, TEXT("After Async"));
 
 		UE_LOG(LogTemp, Log, TEXT("Before Response.Wait"));
 
 		FutureResponse.Wait();
-
 		UE_LOG(LogTemp, Log, TEXT("After Response.Wait"));
-		
-		return FutureResponse.Get();
+
+		if (!Success)
+		{
+			throw FutureResponse.Get().Value;
+		}
+		return FutureResponse.Get().Key;
 	};
 
 	/**
@@ -112,7 +125,7 @@ class WEBSOCKETTEST_API FWebSocketClient
 	*/
 	DECLARE_EVENT(FWebSocketClient, FClosedEvent);
 	FClosedEvent OnClosed;
-	
+
 	/**
 	* Delegate called when websocket attempts to reconnect to the server.
 	*/
@@ -127,21 +140,55 @@ class WEBSOCKETTEST_API FWebSocketClient
 	uint64  Counter = 0;
 	bool IsReconnecting = false;
 	bool QuittingFlag = false;
-	
+	std::shared_timed_mutex AckMutex;
 	std::mutex Mutex;
 	std::condition_variable RequestCV, ReconnectingCV, QuittingCV;
-	
+
 	FWebSocketAsyncAwaitResponse AsyncAwaitResponse;
-	
+
 	void Reconnect();
-	
+
 	void ProcessResponse(FString);
 
 	void BindResponseDelegate(const bool);
 
-	
+	TSharedPtr<FJsonObject> ReadAckMap(const int32 Id)
+	{
+		std::shared_lock<std::shared_timed_mutex> Lock(AckMutex);
+		return AckMap[Id];
+	}
+
+	void WriteAckMap(const int32 Id, const TSharedPtr<FJsonObject> JsonObject)
+	{
+		std::unique_lock<std::shared_timed_mutex> Lock(AckMutex);
+		AckMap.Add(Id, JsonObject);
+	}
+
+	void RemoveFromAckMap(const int32 Id)
+	{
+		std::unique_lock<std::shared_timed_mutex> Lock(AckMutex);
+		AckMap.Remove(Id);
+	}
+
+	TSharedPtr<FJsonObject> WaitForAck(const int32 Id, const uint TimeoutMs = 5000, const uint PollIntervalMs = 10)
+	{
+		uint Elapsed = 0;
+		const auto SleepDuration = PollIntervalMs*1ms;
+		while (true)
+		{
+			const auto Ack = ReadAckMap(Id);
+			if (Ack != nullptr) return Ack;
+			if (Ack == nullptr)
+			{
+				Elapsed += PollIntervalMs;
+				if (Elapsed >= TimeoutMs) return nullptr;
+				std::this_thread::sleep_for(SleepDuration);
+			}
+		}
+	}
+
 	template <typename TResponseData>
-	TResponseData WaitForResponseAsync(const int32 Id)
+	TResponseData WaitForResponseAsync(const int32 Id, const uint TimeoutMs = 5000)
 	{
 		UE_LOG(LogTemp, Log, TEXT("Inside WaitForResponseAsync"));
 		TResponseData Data;
@@ -149,15 +196,28 @@ class WEBSOCKETTEST_API FWebSocketClient
 		UE_LOG(LogTemp, Log, TEXT("Waiting for notify"));
 
 		std::unique_lock<std::mutex> UniqueLock(Mutex);
-		UE_LOG(LogTemp, Log, TEXT("Inside lock"));
-		RequestCV.wait(UniqueLock);
-		UE_LOG(LogTemp, Log, TEXT("After lock wait"));
-		Mutex.unlock();
+		const auto Ack = WaitForAck(Id, TimeoutMs);
+		RemoveFromAckMap(Id);
+		if (Ack == nullptr)
+		{
+			UE_LOG(LogTemp, Log, TEXT("Request timeout"));
+			FMgsError Error;
+			Error.Message = "Timeout";
+			throw Error;
+		}
+		UE_LOG(LogTemp, Log, TEXT("Got Ack"));
 
-		UE_LOG(LogTemp, Log, TEXT("After wait"));
-
-		FJsonObjectConverter::JsonObjectToUStruct(AckMap[Id].ToSharedRef(), &Data);
-
-		return Data;		
+		const auto NestedJsonData = Ack->GetObjectField("data");
+		UE_LOG(LogTemp, Log, TEXT("Got Event: %s"), *Ack->GetStringField("event"));
+		if (Ack->GetStringField("event").Compare("Error") == 0)
+		{
+			FMgsError Error;
+			FJsonObjectConverter::JsonObjectToUStruct(NestedJsonData.ToSharedRef(), &Error);
+			UE_LOG(LogTemp, Log, TEXT("Got mgs error response"));
+			throw Error;
+		}
+		FJsonObjectConverter::JsonObjectToUStruct(NestedJsonData.ToSharedRef(), &Data);
+		UE_LOG(LogTemp, Log, TEXT("Got response"));
+		return Data;
 	}
 };

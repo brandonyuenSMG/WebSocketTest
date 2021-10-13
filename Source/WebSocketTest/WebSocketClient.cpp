@@ -35,26 +35,26 @@ void FWebSocketClient::ConnectToServer()
 	{
 		const TSharedRef<IWebSocket> IWebSocket = WebSocketModule->CreateWebSocket("ws://localhost:5000/ws");
 		WebSocket = &IWebSocket.Get();
-	
+
 		ConnectionDelegate.AddRaw(this, &FWebSocketClient::BindResponseDelegate);
-	
+
 		WebSocket->OnConnected().AddLambda([this]() {
 			UE_LOG(LogTemp, Log, TEXT("Connected to websocket server."));
 			ConnectionDelegate.Broadcast(true);
 			Connected = true;
 		});
-			
+
 		WebSocket->OnConnectionError().AddLambda([this](const FString& Error) {
 			UE_LOG(LogTemp, Log, TEXT("Failed to connect to websocket server with error: \"%s\"."), *Error);
 			ConnectionDelegate.Broadcast(false);
 			Connected = false;
 		});
-				
+
 		WebSocket->OnMessage().AddLambda([this](const FString& Message) {
 			UE_LOG(LogTemp, Log, TEXT("Received message from websocket server: \"%s\"."), *Message);
 			ProcessResponse(Message);
 		});
-				
+
 		WebSocket->OnClosed().AddLambda([this](const int32 StatusCode, const FString& Reason, bool bWasClean) {
 			UE_LOG(LogTemp, Log, TEXT("Connection to websocket server has been closed with status code: \"%d\" and reason: \"%s\"."), StatusCode, *Reason);
 			Connected = false;
@@ -66,15 +66,15 @@ void FWebSocketClient::ConnectToServer()
 				UE_LOG(LogTemp, Log, TEXT("Attempting to reconnect..."));
 				IsReconnecting = true;
 				OnReconnection.Broadcast();
-				Retries = Configuration.Num_Retries;			
-				Reconnect();			
+				Retries = Configuration.Num_Retries;
+				Reconnect();
 			}
 		});
-		
+
 		std::unique_lock<std::mutex> UniqueLock(Mutex);
 		WebSocket->Connect();
 		ReconnectingCV.wait(UniqueLock);
-		Mutex.unlock();	
+		Mutex.unlock();
 	});
 }
 
@@ -131,12 +131,12 @@ void FWebSocketClient::ProcessResponse(const FString Message)
 {
 	TSharedPtr<FJsonObject> JsonResponse;
 	const TSharedRef<TJsonReader<>> JsonReader = TJsonReaderFactory<>::Create(Message);
-	
+
 	if (FJsonSerializer::Deserialize(JsonReader, JsonResponse))
 	{
+		//TODO: if id is 0, need to add it to a push queue, otherwise, all pushes will overwrite each other
 		const int32 Id = JsonResponse->GetIntegerField("id");
-		const TSharedPtr<FJsonObject> Data = JsonResponse->GetObjectField("data");
-		AckMap[Id] = Data;
+		WriteAckMap(Id, JsonResponse);
 
 		RequestCV.notify_one();
 
@@ -167,7 +167,7 @@ void FWebSocketClient::Quit()
 			std::unique_lock<std::mutex> UniqueLock(Mutex);
 			QuittingFlag = true;
 			QuittingCV.wait(UniqueLock);
-			Mutex.unlock();	
+			Mutex.unlock();
 		});
 	}
 }
