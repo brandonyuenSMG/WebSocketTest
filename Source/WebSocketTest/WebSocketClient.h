@@ -34,7 +34,7 @@ class WEBSOCKETTEST_API FWebSocketClient
 	IWebSocket* WebSocket;
 
 	explicit FWebSocketClient(struct FWebSocketConfiguration);
-	
+
 	FWebSocketClient();
 
 	void SetNumRetries(int32);
@@ -44,58 +44,56 @@ class WEBSOCKETTEST_API FWebSocketClient
 	void ConnectToServer();
 
 	void DisconnectFromServer() const;
-	
+
 	bool IsConnected() const;
 
-	
+
 	// Prevents the game from crashing if the client is in the middle of trying to reconnect
 	void Quit();
-	
-	template <typename TRequest, typename TRequestData>
-	TRequest CreateWebSocketRequest(TRequestData Data, const bool AckRequired)
-	{
-		TRequest Request;
-	
-		Request.Id = ++Counter > 0 ? Counter : 1;
-		Request.Ack = AckRequired ? 1 : 0;
-		Request.MsgType = Data.GetName();
-		Request.Data = Data;
 
-		return Request;
-	};
+	template <typename TRequest, typename TRequestData>
+	TSharedPtr<FJsonObject> CreateWebSocketRequest(TRequestData Data, const bool AckRequired)
+	{
+		TSharedPtr<FJsonObject> JsonObject = MakeShareable(new FJsonObject);
+		JsonObject->SetNumberField("id", ++Counter > 0 ? Counter : 1);
+		JsonObject->SetNumberField("ack", AckRequired ? 1 : 0);
+		JsonObject->SetStringField("msgType", Data.GetName());
+		JsonObject->SetObjectField("data", FJsonObjectConverter::UStructToJsonObject<TRequestData>(Data));
+		return JsonObject;
+	}
 
 	template <typename TRequest, typename TRequestData, typename TResponseData>
 	TResponseData SendAsync(TRequestData RequestData, const bool AckRequired)
-	{	
+	{
 		FString JsonRequest;
-		TRequest WebSocketRequest = CreateWebSocketRequest<TRequest, TRequestData>(RequestData, AckRequired);
-		
+		auto WebSocketRequest = CreateWebSocketRequest<TRequest, TRequestData>(RequestData, AckRequired);
+
 		if (AckRequired)
 		{
 			// FWebSocketResponse Response {nullptr, false};
-			AckMap.Add(WebSocketRequest.Id, nullptr);
+			AckMap.Add(WebSocketRequest->GetNumberField("id"), nullptr);
 		}
-		
-		FJsonObjectConverter::UStructToJsonObjectString(WebSocketRequest, JsonRequest);
-		
+		const TSharedRef< TJsonWriter<> > Writer = TJsonWriterFactory<>::Create(&JsonRequest);
+		FJsonSerializer::Serialize(WebSocketRequest.ToSharedRef(), Writer);
+
 		UE_LOG(LogTemp, Log, TEXT("%s"), *JsonRequest);
-		
+
 		WebSocket->Send(JsonRequest);
-		
+
 		UE_LOG(LogTemp, Log, TEXT("Request sent"));
-		
+
 		if (!AckRequired) return {};
 
 		TFunction<TResponseData()> Task = [this, &WebSocketRequest] {
-		
+
 			UE_LOG(LogTemp, Log, TEXT("Before WaitForResponseAsync"));
-			return WaitForResponseAsync<TResponseData>(WebSocketRequest.Id);
+			return WaitForResponseAsync<TResponseData>(WebSocketRequest->GetNumberField("id"));
 		};
-		
+
 		UE_LOG(LogTemp, Log, TEXT("Before Async"));
-		
-		auto FutureResponse = Async(EAsyncExecution::TaskGraph, Task); 
-		
+
+		auto FutureResponse = Async(EAsyncExecution::TaskGraph, Task);
+
 		UE_LOG(LogTemp, Log, TEXT("After Async"));
 
 		UE_LOG(LogTemp, Log, TEXT("Before Response.Wait"));
@@ -103,7 +101,7 @@ class WEBSOCKETTEST_API FWebSocketClient
 		FutureResponse.Wait();
 
 		UE_LOG(LogTemp, Log, TEXT("After Response.Wait"));
-		
+
 		return FutureResponse.Get();
 	};
 
@@ -112,7 +110,7 @@ class WEBSOCKETTEST_API FWebSocketClient
 	*/
 	DECLARE_EVENT(FWebSocketClient, FClosedEvent);
 	FClosedEvent OnClosed;
-	
+
 	/**
 	* Delegate called when websocket attempts to reconnect to the server.
 	*/
@@ -127,19 +125,19 @@ class WEBSOCKETTEST_API FWebSocketClient
 	uint64  Counter = 0;
 	bool IsReconnecting = false;
 	bool QuittingFlag = false;
-	
+
 	std::mutex Mutex;
 	std::condition_variable RequestCV, ReconnectingCV, QuittingCV;
-	
+
 	FWebSocketAsyncAwaitResponse AsyncAwaitResponse;
-	
+
 	void Reconnect();
-	
+
 	void ProcessResponse(FString);
 
 	void BindResponseDelegate(const bool);
 
-	
+
 	template <typename TResponseData>
 	TResponseData WaitForResponseAsync(const int32 Id)
 	{
@@ -158,6 +156,6 @@ class WEBSOCKETTEST_API FWebSocketClient
 
 		FJsonObjectConverter::JsonObjectToUStruct(AckMap[Id].ToSharedRef(), &Data);
 
-		return Data;		
+		return Data;
 	}
 };
