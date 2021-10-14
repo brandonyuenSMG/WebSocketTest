@@ -138,6 +138,7 @@ void FWebSocketClient::ProcessResponse(const FString Message)
 		const int32 Id = JsonResponse->GetIntegerField("id");
 		if (Id == 0)
 		{
+			UE_LOG(LogTemp, Log, TEXT("Enqueuing Push: %s"), *JsonResponse->GetStringField("event"));
 			PushMessageQueue.Enqueue(JsonResponse);
 			return;
 		}
@@ -153,16 +154,20 @@ void FWebSocketClient::ProcessResponse(const FString Message)
 	}
 }
 
-void FWebSocketClient::ProcessPushMessages(uint32 MaxMessages = 30)
+void FWebSocketClient::ProcessPushMessages(uint32 MaxMessages)
 {
 	TSharedPtr<FJsonObject> JsonResponse;
-	while (--MaxMessages > 0 && PushMessageQueue.Dequeue(JsonResponse))
+	while (MaxMessages-- > 0 && PushMessageQueue.Dequeue(JsonResponse))
 	{
-		const auto PushHandler = TypeRegistry[JsonResponse->GetStringField("Event")];
-		if (PushHandler)
+		auto EventName = JsonResponse->GetStringField("event");
+		if (!TypeRegistry.Contains(EventName))
 		{
-			PushHandler(JsonResponse);
+			UE_LOG(LogTemp, Log, TEXT("Dequeued Unknown Json Push: %s"), *EventName);
+			return;
 		}
+		const auto PushHandler = TypeRegistry[JsonResponse->GetStringField("event")];
+		UE_LOG(LogTemp, Log, TEXT("Dequeued Json: %s"), *EventName);
+		PushHandler(JsonResponse);
 	}
 }
 

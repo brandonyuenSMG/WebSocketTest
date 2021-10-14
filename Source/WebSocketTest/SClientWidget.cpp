@@ -158,7 +158,7 @@ ChildSlot
             ConnectionIndicator->SetColorAndOpacity(FLinearColor::FromSRGBColor(FColor::Green));
             Client->On<FChatMessage>("ChatMessage", [](const FChatMessage& Message)
             {
-                FMessageDialog().Debugf(FText::FromString("Got Message: " + Message.Message));
+                FMessageDialog().Debugf(FText::FromString(Message.Message));
             });
         }
     });
@@ -269,6 +269,15 @@ FReply SClientWidget::OnQuitClicked() const
     }
 
     return FReply::Handled();
+}
+
+void SClientWidget::Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime)
+{
+    SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
+    if (Client->IsConnected())
+    {
+        Client->ProcessPushMessages(1);
+    }
 }
 #undef LOCTEXT_NAMESPACE
 
