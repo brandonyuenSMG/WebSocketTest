@@ -155,11 +155,11 @@ ChildSlot
     {
         if (IsSuccess)
         {
-             ConnectionIndicator->SetColorAndOpacity(FLinearColor::FromSRGBColor(FColor::Green));
-             // Client->WebSocket->OnMessage().AddLambda([](const FString& Message)
-             // {
-             //     FMessageDialog().Debugf(FText::FromString(Message));
-             // });
+            ConnectionIndicator->SetColorAndOpacity(FLinearColor::FromSRGBColor(FColor::Green));
+            Client->On<FChatMessage>("ChatMessage", [](const FChatMessage& Message)
+            {
+                FMessageDialog().Debugf(FText::FromString("Got Message: " + Message.Message));
+            });
         }
     });
 

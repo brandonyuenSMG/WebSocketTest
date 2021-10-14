@@ -103,3 +103,16 @@ struct FEcho : public FWebSocketRequest
 	UPROPERTY()
 	FEchoRequestData Data;
 };
+
+USTRUCT()
+struct FChatMessage
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FString Message;
+
+	UPROPERTY()
+	FString SenderId;
+
+};

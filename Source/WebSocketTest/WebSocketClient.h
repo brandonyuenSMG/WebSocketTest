@@ -14,6 +14,7 @@ using namespace std::chrono_literals;
 
 #include "WebSocketStructs.h"
 
+typedef void (*Func_T)(TSharedPtr<FJsonObject>);
 struct FWebSocketConfiguration
 {
 	/**
@@ -134,8 +135,22 @@ class WEBSOCKETTEST_API FWebSocketClient
 
 	TMulticastDelegate<void(bool)> ConnectionDelegate;
 
+	template <typename T>
+	void On(FString EventName, std::function<T*()> Handler)
+	{
+		TypeRegistry.Add(EventName, [Handler](TSharedPtr<FJsonObject> JsonObject)
+		{
+			T PushedMessage;
+			FJsonObjectConverter::JsonObjectToUStruct(JsonObject.ToSharedRef(), &PushedMessage);
+			UE_LOG(LogTemp, Log, TEXT("Got pushed message"));
+			Handler(PushedMessage);
+		});
+	}
+
 	private:
 	TMap<int, TSharedPtr<FJsonObject>> AckMap;
+	TQueue<TSharedPtr<FJsonObject>> PushMessageQueue;
+	TMap<FString, Func_T> TypeRegistry;
 	int32 Retries = 0;
 	uint64  Counter = 0;
 	bool IsReconnecting = false;
@@ -149,6 +164,7 @@ class WEBSOCKETTEST_API FWebSocketClient
 	void Reconnect();
 
 	void ProcessResponse(FString);
+	void ProcessPushMessages(uint32 MaxMessages);
 
 	void BindResponseDelegate(const bool);
 
