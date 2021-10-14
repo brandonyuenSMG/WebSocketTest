@@ -136,6 +136,13 @@ void FWebSocketClient::ProcessResponse(const FString Message)
 	{
 		//TODO: if id is 0, need to add it to a push queue, otherwise, all pushes will overwrite each other
 		const int32 Id = JsonResponse->GetIntegerField("id");
+		if (Id == 0)
+		{
+			UE_LOG(LogTemp, Log, TEXT("Enqueuing Push: %s"), *JsonResponse->GetStringField("event"));
+			PushMessageQueue.Enqueue(JsonResponse);
+			return;
+		}
+
 		WriteAckMap(Id, JsonResponse);
 
 		RequestCV.notify_one();
@@ -144,6 +151,23 @@ void FWebSocketClient::ProcessResponse(const FString Message)
 	} else
 	{
 		UE_LOG(LogTemp, Log, TEXT("Couldn't deserialize"));
+	}
+}
+
+void FWebSocketClient::ProcessPushMessages(uint32 MaxMessages)
+{
+	TSharedPtr<FJsonObject> JsonResponse;
+	while (MaxMessages-- > 0 && PushMessageQueue.Dequeue(JsonResponse))
+	{
+		auto EventName = JsonResponse->GetStringField("event");
+		if (!TypeRegistry.Contains(EventName))
+		{
+			UE_LOG(LogTemp, Log, TEXT("Dequeued Unknown Json Push: %s"), *EventName);
+			return;
+		}
+		const auto PushHandler = TypeRegistry[JsonResponse->GetStringField("event")];
+		UE_LOG(LogTemp, Log, TEXT("Dequeued Json: %s"), *EventName);
+		PushHandler(JsonResponse);
 	}
 }
 

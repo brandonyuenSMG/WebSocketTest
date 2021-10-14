@@ -134,8 +134,24 @@ class WEBSOCKETTEST_API FWebSocketClient
 
 	TMulticastDelegate<void(bool)> ConnectionDelegate;
 
+	template <typename T>
+	void On(FString EventName, std::function<void(const T)> const Handler)
+	{
+		TypeRegistry.Add(EventName, [Handler](const TSharedPtr<FJsonObject>& JsonObject)
+		{
+			T PushedMessage;
+			FJsonObjectConverter::JsonObjectToUStruct(JsonObject->GetObjectField("data").ToSharedRef(), &PushedMessage);
+
+			UE_LOG(LogTemp, Log, TEXT("Got pushed message: %s"), *JsonObject->GetStringField("event"));
+			Handler(PushedMessage);
+		});
+	}
+	void ProcessPushMessages(uint32 MaxMessages = 30);
+
 	private:
 	TMap<int, TSharedPtr<FJsonObject>> AckMap;
+	TQueue<TSharedPtr<FJsonObject>> PushMessageQueue;
+	TMap<FString, std::function<void(TSharedPtr<FJsonObject>)>> TypeRegistry;
 	int32 Retries = 0;
 	uint64  Counter = 0;
 	bool IsReconnecting = false;

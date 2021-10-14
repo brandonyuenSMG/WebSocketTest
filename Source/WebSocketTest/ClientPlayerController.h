@@ -7,18 +7,18 @@
 #include "ClientPlayerController.generated.h"
 
 /**
- * 
+ *
  */
 UCLASS()
 class WEBSOCKETTEST_API AClientPlayerController : public APlayerController
 {
 	GENERATED_BODY()
-	
+
 	protected:
-        
+
 	AClientPlayerController();
-        
+
 	virtual void SetupInputComponent() override;
-        
+
 	void OpenMenu();
 };

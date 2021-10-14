@@ -7,7 +7,7 @@
 #include "SlateExtras.h"
 #include "WebSocketClient.h"
 /**
- * 
+ *
  */
 class SClientWidget final : public SCompoundWidget
 {
@@ -18,9 +18,9 @@ private:
 	SLATE_BEGIN_ARGS(SClientWidget) {}
 
 	SLATE_ARGUMENT(TWeakObjectPtr<class AClientHUD>, OwningHUD)
-	
+
 	SLATE_END_ARGS()
-	
+
 	/** Constructs this widget with InArgs */
 	void Construct(const FArguments& InArgs);
 
@@ -30,7 +30,8 @@ private:
 	FReply OnEchoClicked() const;
 	FReply OnDisconnectClicked() const;
 	FReply OnQuitClicked() const;
-	
+	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
+
 	/** The HUD that created this widget*/
 	TWeakObjectPtr<class AClientHUD> OwningHUD;
 
